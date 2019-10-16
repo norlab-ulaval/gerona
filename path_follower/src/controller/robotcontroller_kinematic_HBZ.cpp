@@ -1,13 +1,13 @@
-// HEADER
+	// HEADER
 #include <path_follower/controller/robotcontroller_kinematic_HBZ.h>
 
-// THIRD PARTY
+	// THIRD PARTY
 #include <nav_msgs/Path.h>
 #include <visualization_msgs/Marker.h>
 #include <visualization_msgs/MarkerArray.h>
 
 
-// PROJECT
+	// PROJECT
 #include <path_follower/parameters/path_follower_parameters.h>
 #include <path_follower/utils/cubic_spline_interpolation.h>
 #include <cslibs_navigation_utilities/MathHelper.h>
@@ -18,7 +18,7 @@
 #include <path_follower/factory/controller_factory.h>
 
 
-// SYSTEM
+	// SYSTEM
 #include <cmath>
 #include <deque>
 #include <Eigen/Core>
@@ -27,134 +27,135 @@
 #include <pcl_ros/point_cloud.h>
 #include <path_follower/factory/controller_factory.h>
 
-REGISTER_ROBOT_CONTROLLER(RobotController_Kinematic_HBZ, kinematic_hbz, default_collision_avoider);
+	REGISTER_ROBOT_CONTROLLER(RobotController_Kinematic_HBZ, kinematic_hbz, default_collision_avoider);
 
-using namespace Eigen;
-
-
-RobotController_Kinematic_HBZ::RobotController_Kinematic_HBZ():
-    RobotController(),
-    cmd_(this),
-    vn_(0),
-    Ts_(0.02),
-    ind_(0),
-    proj_ind_(0),
-    xe_(0),
-    ye_(0),
-    theta_e_(0),
-    x_meas_(0),
-    y_meas_(0),
-    theta_meas_(0),
-    angular_vel_(0),
-    Vl_(0),
-    Vr_(0),
-    delta_(0)
-{
-
-    wheel_velocities_ = nh_.subscribe<std_msgs::Float64MultiArray>("wheel_velocities", 10,
-                                                                   &RobotController_Kinematic_HBZ::WheelVelocities, this);
-
-}
-
-void RobotController_Kinematic_HBZ::stopMotion()
-{
-
-    cmd_.speed = 0;
-    cmd_.direction_angle = 0;
-    cmd_.rotation = 0;
-
-    MoveCommand mcmd = cmd_;
-    publishMoveCommand(mcmd);
-}
-
-void RobotController_Kinematic_HBZ::initialize()
-{
-    RobotController::initialize();
-
-    //reset the index of the current point on the path
-    ind_ = 0;
-
-    theta_e_ = 0.0;
-
-    // desired velocity
-    vn_ = std::min(PathFollowerParameters::getInstance()->max_velocity(), velocity_);
-    ROS_DEBUG_STREAM("velocity_: " << velocity_ << ", vn: " << vn_);
+	using namespace Eigen;
 
 
-}
+	RobotController_Kinematic_HBZ::RobotController_Kinematic_HBZ():
+	    RobotController(),
+	    cmd_(this),
+	    vn_(0),
+	    Ts_(0.02),
+	    ind_(0),
+	    proj_ind_(0),
+	    xe_(0),
+	    ye_(0),
+	    theta_e_(0),
+	    x_meas_(0),
+	    y_meas_(0),
+	    theta_meas_(0),
+	    angular_vel_(0),
+	    Vl_(0),
+	    Vr_(0),
+	    delta_(0)
+	{
 
-void RobotController_Kinematic_HBZ::WheelVelocities(const std_msgs::Float64MultiArray::ConstPtr& array)
-{
-    double frw = array->data[0];
-    double flw = array->data[1];
-    double brw = array->data[2];
-    double blw = array->data[3];
+	    wheel_velocities_ = nh_.subscribe<std_msgs::Float64MultiArray>("wheel_velocities", 10,
+									   &RobotController_Kinematic_HBZ::WheelVelocities, this);
 
-    Vl_ = (flw + blw)/2.0;
-    Vr_ = (frw + brw)/2.0;
-}
+	}
 
+	void RobotController_Kinematic_HBZ::stopMotion()
+	{
 
-void RobotController_Kinematic_HBZ::start()
-{
+	    cmd_.speed = 0;
+	    cmd_.direction_angle = 0;
+	    cmd_.rotation = 0;
 
-}
+	    MoveCommand mcmd = cmd_;
+	    publishMoveCommand(mcmd);
+	}
 
-void RobotController_Kinematic_HBZ::reset()
-{
-    RobotController::reset();
-}
+	void RobotController_Kinematic_HBZ::initialize()
+	{
+	    RobotController::initialize();
 
-void RobotController_Kinematic_HBZ::setPath(Path::Ptr path)
-{
-    RobotController::setPath(path);
-}
+	    //reset the index of the current point on the path
+	    ind_ = 0;
 
-double RobotController_Kinematic_HBZ::computeSpeed()
-{
-    double v = vn_;
+	    theta_e_ = 0.0;
 
-    double V1 = 1.0/2.0*(std::pow(xe_,2) + std::pow(ye_,2) + 1.0/opt_.lambda()*fabs(sin(theta_e_-delta_)));
-
-    if(angular_vel_ > 0){
-
-        if(V1 >= opt_.epsilon()){
-            v = (-opt_.alpha_r()*opt_.y_ICR_l()*vn_)/(opt_.y_ICR_r() - opt_.y_ICR_l());
-        }
-        else if(V1 < opt_.epsilon()){
-            v = (opt_.alpha_r()*vn_)/(1 + std::fabs(opt_.y_ICR_r()*path_interpol.curvature(ind_)));
-        }
-    }
-    else if(angular_vel_ <= 0){
-
-        if(V1 >= opt_.epsilon()){
-            v = (opt_.alpha_l()*opt_.y_ICR_r()*vn_)/(opt_.y_ICR_r() - opt_.y_ICR_l());
-        }
-        else if(V1 < opt_.epsilon()){
-            v = (opt_.alpha_l()*vn_)/(1 + std::fabs(opt_.y_ICR_l()*path_interpol.curvature(ind_)));
-        }
-    }
-
-    return v;
-}
-
-RobotController::MoveCommandStatus RobotController_Kinematic_HBZ::computeMoveCommand(MoveCommand *cmd)
-{
-    // omni drive can rotate.
-    *cmd = MoveCommand(true);
-
-    if(path_interpol.n() < 2) {
-        ROS_ERROR("[Line] path is too short (N = %d)", (int) path_interpol.n());
-
-        stopMotion();
-        return MoveCommandStatus::REACHED_GOAL;
-    }
+	    // desired velocity
+	    vn_ = std::min(PathFollowerParameters::getInstance()->max_velocity(), velocity_);
+	    ROS_DEBUG_STREAM("velocity_: " << velocity_ << ", vn: " << vn_);
 
 
-    /// get the pose as pose(0) = x, pose(1) = y, pose(2) = theta
-    Eigen::Vector3d current_pose = pose_tracker_->getRobotPose();
+	}
 
-    const geometry_msgs::Twist v_meas_twist = pose_tracker_->getVelocity();
+	void RobotController_Kinematic_HBZ::WheelVelocities(const std_msgs::Float64MultiArray::ConstPtr& array)
+	{
+	    double frw = array->data[0];
+	    double flw = array->data[1];
+	    double brw = array->data[2];
+	    double blw = array->data[3];
+
+	    Vl_ = (flw + blw)/2.0;
+	    Vr_ = (frw + brw)/2.0;
+	}
+
+
+	void RobotController_Kinematic_HBZ::start()
+	{
+
+	}
+
+	void RobotController_Kinematic_HBZ::reset()
+	{
+	    RobotController::reset();
+	}
+
+	void RobotController_Kinematic_HBZ::setPath(Path::Ptr path)
+	{
+	    RobotController::setPath(path);
+	}
+
+	double RobotController_Kinematic_HBZ::computeSpeed()
+	{
+	    double v = vn_;
+
+	    double V1 = 1.0/2.0*(std::pow(xe_,2) + std::pow(ye_,2) + 1.0/opt_.lambda()*fabs(sin(theta_e_-delta_)));
+
+	    if(angular_vel_ > 0){
+
+		if(V1 >= opt_.epsilon()){
+		    v = (-opt_.alpha_r()*opt_.y_ICR_l()*vn_)/(opt_.y_ICR_r() - opt_.y_ICR_l());
+		}
+		else if(V1 < opt_.epsilon()){
+		    v = (opt_.alpha_r()*vn_)/(1 + std::fabs(opt_.y_ICR_r()*path_interpol.curvature(ind_)));
+		}
+	    }
+	    else if(angular_vel_ <= 0){
+
+		if(V1 >= opt_.epsilon()){
+		    v = (opt_.alpha_l()*opt_.y_ICR_r()*vn_)/(opt_.y_ICR_r() - opt_.y_ICR_l());
+		}
+		else if(V1 < opt_.epsilon()){
+		    v = (opt_.alpha_l()*vn_)/(1 + std::fabs(opt_.y_ICR_l()*path_interpol.curvature(ind_)));
+		}
+	    }
+
+	    return v;
+	}
+
+	RobotController::MoveCommandStatus RobotController_Kinematic_HBZ::computeMoveCommand(MoveCommand *cmd)
+	{
+	    // omni drive can rotate.
+	    *cmd = MoveCommand(true);
+
+	    if(path_interpol.n() < 2) {
+		ROS_ERROR("[Line] path is too short (N = %d)", (int) path_interpol.n());
+
+		stopMotion();
+		return MoveCommandStatus::REACHED_GOAL;
+	    }
+
+
+	    /// get the pose as pose(0) = x, pose(1) = y, pose(2) = theta
+	    Eigen::Vector3d current_pose = pose_tracker_->getRobotPose();
+
+	    const geometry_msgs::Twist v_meas_twist = pose_tracker_->getVelocity();
+	    //get the robot's current angular velocity
     angular_vel_ = pose_tracker_->getVelocity().angular.z;
 
     double v_meas = getDirSign() * sqrt(v_meas_twist.linear.x * v_meas_twist.linear.x
@@ -237,7 +238,7 @@ RobotController::MoveCommandStatus RobotController_Kinematic_HBZ::computeMoveCom
 
     double delta_old = delta_;
 
-    delta_ = MathHelper::AngleClamp(-getDirSign()*opt_.theta_a()*tanh(ye_));
+    delta_ = MathHelper::AngleClamp(-opt_.theta_a()*tanh(ye_));
 
     double delta_prim = (delta_ - delta_old)/Ts_;
     ///***///
