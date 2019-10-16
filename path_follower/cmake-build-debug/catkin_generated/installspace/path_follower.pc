@@ -1,0 +1,8 @@
+prefix=/usr/local
+
+Name: path_follower
+Description: Description of path_follower
+Version: 1.0.0
+Cflags: -I/usr/local/include
+Libs: -L/usr/local/lib -lpath_follower /usr/lib/x86_64-linux-gnu/libalglib.so
+Requires: path_msgs nav_msgs control_msgs cslibs_navigation_utilities

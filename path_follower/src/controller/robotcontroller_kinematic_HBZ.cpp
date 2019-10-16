@@ -155,6 +155,7 @@ RobotController::MoveCommandStatus RobotController_Kinematic_HBZ::computeMoveCom
     Eigen::Vector3d current_pose = pose_tracker_->getRobotPose();
 
     const geometry_msgs::Twist v_meas_twist = pose_tracker_->getVelocity();
+    angular_vel_ = pose_tracker_->getVelocity().angular.z;
 
     double v_meas = getDirSign() * sqrt(v_meas_twist.linear.x * v_meas_twist.linear.x
             + v_meas_twist.linear.y * v_meas_twist.linear.y);
@@ -254,6 +255,7 @@ RobotController::MoveCommandStatus RobotController_Kinematic_HBZ::computeMoveCom
             + opt_.lambda()*trig_ratio*ye_*opt_.x_ICR()*angular_vel_*cos(theta_e_)
             - opt_.k2()*trig_ratio*(theta_diff)*(theta_diff);
 
+//    ROS_INFO_STREAM("Angular velocity: " + std::to_string(angular_vel_) + " Second line : " + std::to_string(opt_.lambda()*trig_ratio*ye_*opt_.x_ICR()*angular_vel_*cos(theta_e_)));
     omega += path_interpol.curvature(ind_)*path_interpol.s_prim();
     cmd_.rotation = boost::algorithm::clamp(omega, -opt_.max_angular_velocity(), opt_.max_angular_velocity());
 
